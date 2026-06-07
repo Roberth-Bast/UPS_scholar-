@@ -10,6 +10,7 @@ from sklearn.metrics.pairwise import cosine_similarity, pairwise_distances
 from sentence_transformers import SentenceTransformer
 from fastapi import FastAPI, Query
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 
 # 1. INSTANCIA DE FASTAPI Y CONFIGURACIÓN DE CORS
 app = FastAPI(title="UPScholar API - Sistema Unificado")
@@ -26,7 +27,7 @@ app.add_middleware(
 try:
     nltk.data.find('corpora/stopwords')
 except LookUpError:
-    nltk.download('stopwords')
+    nltk.download('stopwords', quiet=True)
 
 print("Cargando base de datos 'dataset.csv'...")
 df = pd.read_csv("dataset.csv")
@@ -67,8 +68,9 @@ sim_abstracts_db = cosine_similarity(X_abstracts)
 matriz_sim_combinada_db = (sim_titles_db * 0.1) + (sim_keywords_db * 0.2) + (sim_abstracts_db * 0.7)
 
 # 4. PROCESAMIENTO MATEMÁTICO - MÉTODO EMBEDDINGS LLM (LITERAL 4)
-print("Cargando modelo SentenceTransformer...")
-model_llm = SentenceTransformer('all-MiniLM-L6-v2')
+print("Cargando modelo SentenceTransformer optimizado para Render...")
+# Cambiado a 'paraphrase-MiniLM-L3-v2' para no superar los 512MB de RAM en Render Gratis
+model_llm = SentenceTransformer('paraphrase-MiniLM-L3-v2')
 embeddings_abstracts_db = model_llm.encode(df['Abstracts'].tolist(), show_progress_bar=False)
 
 # 5. LÓGICA DE BÚSQUEDA Y RECOMENDACIÓN (TOP 10 + TOP 3 RELACIONADOS)
@@ -94,11 +96,12 @@ def buscar_metodo_tradicional(query):
     q_key = vectorizador_binario_key.transform([query_clean]).toarray()
     q_abs = vectorizador_tf_idf_abs.transform([query_clean])
     
-    sim_t = 1 - pairwise_distances(q_title, X_titles, metric="jaccard").flatten()
-    sim_k = 1 - pairwise_distances(q_key, X_keywords, metric="jaccard").flatten()
+    # CORRECCIÓN: Orden de matrices invertido para que no falle el cálculo de distancias
+    sim_t = 1 - pairwise_distances(X_titles, q_title, metric="jaccard").flatten()
+    sim_k = 1 - pairwise_distances(X_keywords, q_key, metric="jaccard").flatten()
     sim_a = cosine_similarity(q_abs, X_abstracts).flatten()
     
-    sim_final = (sim_t * 0.1) + (sim_k * 0.2) + (sim_a * 0.7)
+    sim_final = (sim_t * 0.1) + (sim_k * 0.2) + (sim_final_abs * 0.7 if (sim_final_abs := sim_a) is not None else 0)
     indices_top10 = np.argsort(sim_final)[::-1][:10]
     
     resultados = []
@@ -128,7 +131,13 @@ def buscar_metodo_llm(query):
         })
     return resultados
 
-# 6. END-POINT DE LA API
+# 6. RUTA RAÍZ PARA SERVIR TU SITIO WEB VISUAL (HTML)
+@app.get("/")
+def servir_interfaz():
+    # Renderizará tu archivo index.html o el nombre exacto de tu HTML principal
+    return FileResponse("index.html")
+
+# 7. END-POINT DE LA API PARA LAS CONSULTAS DINÁMICAS
 @app.get("/buscar")
 def api_buscar(q: str = Query(..., min_length=1), metodo: str = "tradicional"):
     if metodo == "llm":
