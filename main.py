@@ -24,14 +24,9 @@ app.add_middleware(
 )
 
 # 2. DESCARGA DE RECURSOS NLTK Y CARGA DE DATOS
-try:
-    nltk.data.find('corpora/stopwords')
-except LookupError:
-    print("Descargando recursos de NLTK...")
-# Forzamos la descarga silenciosa al arrancar en Render para evitar fallos de rutas
-    nltk.download('stopwords', quiet=True)
-    print("Cargando base de datos 'dataset.csv'...")
-    
+nltk.download('stopwords', quiet=True)
+
+print("Cargando base de datos 'dataset.csv'...")
 df = pd.read_csv("dataset.csv")
 
 # Tratamiento de nulos para evitar caídas
@@ -42,40 +37,47 @@ df['Authors'] = df.get('Authors', pd.Series(['N/A'] * len(df))).fillna('N/A')
 
 def limpiar_texto(texto):
     stopwords_list = set(stopwords.words('english'))
-    stemmer = PorterStemmer()
+    st_words = PorterStemmer()
     texto_str = str(texto).lower().replace('\\n', ' ').replace('\n', ' ')
     limpio = re.sub(r'[^a-z0-9\s]', ' ', texto_str)
     palabras = limpio.split()
-    resultado = [stemmer.stem(w) for w in palabras if w not in stopwords_list]
+    resultado = [st_words.stem(w) for w in palabras if w not in stopwords_list]
     return " ".join(resultado)
 
-print("Preprocesando textos...")
-df['Title_Clean'] = df['Title'].apply(limpiar_texto)
-df['Keywords_Clean'] = df['Keywords'].apply(limpiar_texto)
-df['Abstracts_Clean'] = df['Abstracts'].apply(limpiar_texto)
+print("Preprocesando textos temporales...")
+titles_clean = df['Title'].apply(limpiar_texto).tolist()
+keywords_clean = df['Keywords'].apply(limpiar_texto).tolist()
+abstracts_clean = df['Abstracts'].apply(limpiar_texto).tolist()
 
-# 3. PROCESAMIENTO MATEMÁTICO - MÉTODO TRADICIONAL (DEBER 5)
+# 3. PROCESAMIENTO MATEMÁTICO - MÉTODO TRADICIONAL OPTIMIZADO (float32)
 vectorizador_binario_title = CountVectorizer(binary=True)
 vectorizador_binario_key = CountVectorizer(binary=True)
 vectorizador_tf_idf_abs = TfidfVectorizer()
 
-X_titles = vectorizador_binario_title.fit_transform(df['Title_Clean']).toarray()
-X_keywords = vectorizador_binario_key.fit_transform(df['Keywords_Clean']).toarray()
-X_abstracts = vectorizador_tf_idf_abs.fit_transform(df['Abstracts_Clean'])
+# Convertimos matrices a float32 para ahorrar el 50% de memoria RAM
+X_titles = vectorizador_binario_title.fit_transform(titles_clean).toarray().astype(np.float32)
+X_keywords = vectorizador_binario_key.fit_transform(keywords_clean).toarray().astype(np.float32)
+X_abstracts = vectorizador_tf_idf_abs.fit_transform(abstracts_clean)
 
-# Matriz ítem-ítem cruzada para las RECOMENDACIONES (Top 3)
-sim_titles_db = 1 - pairwise_distances(X_titles, metric="jaccard")
-sim_keywords_db = 1 - pairwise_distances(X_keywords, metric="jaccard")
-sim_abstracts_db = cosine_similarity(X_abstracts)
+print("Calculando matrices cruzadas en baja precisión...")
+sim_titles_db = (1 - pairwise_distances(X_titles, metric="jaccard")).astype(np.float32)
+sim_keywords_db = (1 - pairwise_distances(X_keywords, metric="jaccard")).astype(np.float32)
+sim_abstracts_db = cosine_similarity(X_abstracts).astype(np.float32)
+
+# Combinación ponderada guardada estrictamente en float32
 matriz_sim_combinada_db = (sim_titles_db * 0.1) + (sim_keywords_db * 0.2) + (sim_abstracts_db * 0.7)
 
-# 4. PROCESAMIENTO MATEMÁTICO - MÉTODO EMBEDDINGS LLM (LITERAL 4)
-print("Cargando modelo SentenceTransformer optimizado para Render...")
-# Cambiado a 'paraphrase-MiniLM-L3-v2' para no superar los 512MB de RAM en Render Gratis
-model_llm = SentenceTransformer('paraphrase-MiniLM-L3-v2')
-embeddings_abstracts_db = model_llm.encode(df['Abstracts'].tolist(), show_progress_bar=False)
+# Liberar variables temporales pesadas de memoria de texto para darle aire a Render
+del titles_clean, keywords_clean, abstracts_clean
+del sim_titles_db, sim_keywords_db, sim_abstracts_db
 
-# 5. LÓGICA DE BÚSQUEDA Y RECOMENDACIÓN (TOP 10 + TOP 3 RELACIONADOS)
+# 4. PROCESAMIENTO MATEMÁTICO - MÉTODO EMBEDDINGS LLM ULTRA-LIGERO
+print("Cargando modelo SentenceTransformer ultraligero para Render...")
+# 'paraphrase-MiniLM-L3-v2' requiere la mitad de RAM que all-MiniLM-L6-v2, ideal para Render gratis
+model_llm = SentenceTransformer('paraphrase-MiniLM-L3-v2')
+embeddings_abstracts_db = model_llm.encode(df['Abstracts'].tolist(), show_progress_bar=False).astype(np.float32)
+
+# 5. LÓGICA DE BÚSQUEDA Y RECOMENDACIÓN
 def obtener_3_recomendados(idx_articulo, excluir_indices):
     similitudes = matriz_sim_combinada_db[idx_articulo].copy()
     similitudes[idx_articulo] = -1
@@ -94,16 +96,15 @@ def obtener_3_recomendados(idx_articulo, excluir_indices):
 
 def buscar_metodo_tradicional(query):
     query_clean = limpiar_texto(query)
-    q_title = vectorizador_binario_title.transform([query_clean]).toarray()
-    q_key = vectorizador_binario_key.transform([query_clean]).toarray()
+    q_title = vectorizador_binario_title.transform([query_clean]).toarray().astype(np.float32)
+    q_key = vectorizador_binario_key.transform([query_clean]).toarray().astype(np.float32)
     q_abs = vectorizador_tf_idf_abs.transform([query_clean])
     
-    # CORRECCIÓN: Orden de matrices invertido para que no falle el cálculo de distancias
     sim_t = 1 - pairwise_distances(X_titles, q_title, metric="jaccard").flatten()
     sim_k = 1 - pairwise_distances(X_keywords, q_key, metric="jaccard").flatten()
     sim_a = cosine_similarity(q_abs, X_abstracts).flatten()
     
-    sim_final = (sim_t * 0.1) + (sim_k * 0.2) + (sim_final_abs * 0.7 if (sim_final_abs := sim_a) is not None else 0)
+    sim_final = (sim_t * 0.1) + (sim_k * 0.2) + (sim_a * 0.7)
     indices_top10 = np.argsort(sim_final)[::-1][:10]
     
     resultados = []
@@ -118,7 +119,7 @@ def buscar_metodo_tradicional(query):
     return resultados
 
 def buscar_metodo_llm(query):
-    query_embedding = model_llm.encode([query])
+    query_embedding = model_llm.encode([query]).astype(np.float32)
     sim_final = cosine_similarity(query_embedding, embeddings_abstracts_db).flatten()
     indices_top10 = np.argsort(sim_final)[::-1][:10]
     
@@ -133,13 +134,12 @@ def buscar_metodo_llm(query):
         })
     return resultados
 
-# 6. RUTA RAÍZ PARA SERVIR TU SITIO WEB VISUAL (HTML)
+# 6. ENLACE CON TU FRONTEND HTML
 @app.get("/")
 def servir_interfaz():
-    # Renderizará tu archivo index.html o el nombre exacto de tu HTML principal
     return FileResponse("index.html")
 
-# 7. END-POINT DE LA API PARA LAS CONSULTAS DINÁMICAS
+# 7. END-POINT DE LA API
 @app.get("/buscar")
 def api_buscar(q: str = Query(..., min_length=1), metodo: str = "tradicional"):
     if metodo == "llm":
