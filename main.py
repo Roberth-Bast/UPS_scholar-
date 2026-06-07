@@ -27,9 +27,11 @@ app.add_middleware(
 try:
     nltk.data.find('corpora/stopwords')
 except LookupError:
+    print("Descargando recursos de NLTK...")
+# Forzamos la descarga silenciosa al arrancar en Render para evitar fallos de rutas
     nltk.download('stopwords', quiet=True)
-
-print("Cargando base de datos 'dataset.csv'...")
+    print("Cargando base de datos 'dataset.csv'...")
+    
 df = pd.read_csv("dataset.csv")
 
 # Tratamiento de nulos para evitar caídas
