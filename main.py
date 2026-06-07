@@ -26,7 +26,7 @@ app.add_middleware(
 # 2. DESCARGA DE RECURSOS NLTK Y CARGA DE DATOS
 try:
     nltk.data.find('corpora/stopwords')
-except LookUpError:
+except LookupError:
     nltk.download('stopwords', quiet=True)
 
 print("Cargando base de datos 'dataset.csv'...")
