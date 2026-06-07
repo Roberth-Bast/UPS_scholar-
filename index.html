@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <title>UPScholar - Buscador Inteligente</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/lucide@latest"></script>
+</head>
+<body class="bg-gray-50 min-h-screen flex flex-col">
+
+    <header class="bg-white border-b border-gray-200 py-6 shadow-sm">
+        <div class="max-w-5xl mx-auto px-4 flex flex-col items-center">
+            <div class="flex items-center space-x-3 mb-2">
+                <div class="bg-blue-600 text-white p-2 rounded-lg"><i data-lucide="graduation-cap" class="w-8 h-8"></i></div>
+                <h1 class="text-3xl font-extrabold text-gray-900">UP<span class="text-blue-600">Scholar</span></h1>
+            </div>
+            <p class="text-xs text-gray-500 font-mono">Búsqueda y Recomendación Inteligente de Documentos Científicos</p>
+        </div>
+    </header>
+
+    <main class="flex-grow max-w-4xl w-full mx-auto px-4 py-8">
+        <div class="bg-white p-6 rounded-xl shadow-md border border-gray-100 mb-8">
+            <form id="searchForm" class="space-y-4">
+                <div class="flex items-center space-x-4 text-sm">
+                    <span class="font-medium text-gray-700">Método:</span>
+                    <label><input type="radio" name="metodo" value="tradicional" checked class="text-blue-600"> <span class="text-gray-700">Tradicional (Jaccard + Coseno)</span></label>
+                    <label><input type="radio" name="metodo" value="llm" class="text-blue-600"> <span class="text-gray-700">Embeddings LLM (Abstracts)</span></label>
+                </div>
+                <div class="relative flex items-center">
+                    <i data-lucide="search" class="absolute left-4 text-gray-400 w-5 h-5"></i>
+                    <input type="text" id="queryInput" placeholder="Escribe tu consulta científica..." class="w-full pl-12 pr-32 py-3.5 bg-gray-50 border border-gray-300 rounded-lg outline-none focus:ring-2 focus:ring-blue-500" required>
+                    <button type="submit" class="absolute right-2 bg-blue-600 hover:bg-blue-700 text-white font-medium px-5 py-2 rounded-md transition text-sm">Buscar</button>
+                </div>
+            </form>
+        </div>
+
+        <div id="loading" class="hidden flex flex-col items-center justify-center py-12 space-y-3">
+            <div class="animate-spin rounded-full h-10 w-10 border-4 border-blue-600 border-t-transparent"></div>
+            <p class="text-gray-500 text-sm">Analizando similitudes semánticas...</p>
+        </div>
+
+        <div id="resultsContainer" class="space-y-6">
+            <div class="text-center text-gray-400 py-12"><p>Ingresa una consulta para desplegar el Top 10 de artículos científicos.</p></div>
+        </div>
+    </main>
+
+    <script>
+        lucide.createIcons();
+        
+        // CAMBIA ESTA URL POR LA QUE TE DA RENDER AL FINALIZAR EL DESPLIEGUE
+        const API_BASE_URL = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'
+            ? 'http://127.0.0.1:8000' 
+            : 'https://TU-SERVICIO-EN-RENDER.onrender.com';
+
+        const searchForm = document.getElementById('searchForm');
+        const queryInput = document.getElementById('queryInput');
+        const loading = document.getElementById('loading');
+        const resultsContainer = document.getElementById('resultsContainer');
+
+        searchForm.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const query = queryInput.value.trim();
+            const metodo = document.querySelector('input[name="metodo"]:checked').value;
+            
+            if (!query) return;
+            loading.classList.remove('hidden');
+            resultsContainer.innerHTML = '';
+
+            try {
+                const response = await fetch(`${API_BASE_URL}/buscar?q=${encodeURIComponent(query)}&metodo=${metodo}`);
+                const data = await response.json();
+                renderResults(data.resultados, metodo);
+            } catch (error) {
+                resultsContainer.innerHTML = `<div class="bg-red-50 border border-red-200 text-red-700 p-4 rounded-lg text-sm">Error de conexión con el backend de Render.</div>`;
+            } finally {
+                loading.classList.add('hidden');
+                lucide.createIcons();
+            }
+        });
+
+        function renderResults(articulos, metodo) {
+            if (!articulos || articulos.length === 0) {
+                resultsContainer.innerHTML = '<div class="text-center text-gray-500 py-12"><p>No se encontraron resultados.</p></div>';
+                return;
+            }
+            let htmlContent = `<h2 class="text-lg font-bold text-gray-800 mb-4">Top 10 Artículos Más Similares (${metodo.toUpperCase()})</h2>`;
+            articulos.forEach((art, index) => {
+                htmlContent += `
+                    <div class="bg-white p-5 rounded-xl shadow-sm border border-gray-200 mb-4">
+                        <div class="flex justify-between items-start mb-2">
+                            <span class="text-blue-600 font-bold font-mono">#${index + 1}</span>
+                            <span class="text-xs font-semibold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded">Similitud: ${(art.score * 100).toFixed(1)}%</span>
+                        </div>
+                        <h3 class="text-base font-semibold text-gray-900 mb-1">${art.title}</h3>
+                        <p class="text-xs text-gray-600 mb-3">${art.abstract}</p>
+                        <div class="bg-gray-50 p-3 rounded-lg border border-dashed border-gray-200">
+                            <h4 class="text-[11px] font-bold text-gray-500 uppercase tracking-wider mb-2">Artículos Recomendados Relacionados (Top 3):</h4>
+                            <div class="grid grid-cols-1 md:grid-cols-3 gap-2">
+                                ${art.recomendados_top3.map((rec, i) => `
+                                    <div class="bg-white p-2 rounded border border-gray-200">
+                                        <p class="text-xs font-medium text-gray-800 line-clamp-2">${rec.title}</p>
+                                        <span class="text-[10px] text-gray-400 block mt-1">Recomendación #${i+1}</span>
+                                    </div>
+                                `).join('')}
+                            </div>
+                        </div>
+                    </div>`;
+            });
+            resultsContainer.innerHTML = htmlContent;
+        }
+    </script>
+</body>
+</html>
