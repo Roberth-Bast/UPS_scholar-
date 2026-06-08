@@ -91,27 +91,33 @@ def buscar_metodo_tradicional(query):
     resultados = []
     for idx in indices_top10:
         resultados.append({
-            "index": int(idx), "title": str(df.iloc[idx]['Title']), "abstract": str(df.iloc[idx]['Abstracts']),
-            "score": float(sim_final[idx]), "recomendados_top3": obtener_3_recomendados(idx, indices_top10)
+            "index": int(idx), 
+            "id_original": int(df.iloc[idx].get('ID', idx)),
+            "title": str(df.iloc[idx]['Title']), 
+            "keywords": str(df.iloc[idx]['Keywords']),
+            "abstract": str(df.iloc[idx]['Abstracts']),
+            "score": float(sim_final[idx]), 
+            "recomendados_top3": obtener_3_recomendados(idx, indices_top10)
         })
     return resultados
 
 def buscar_metodo_llm(query):
-    # LITERAL 4 OPTIMIZADO: Para no cargar SentenceTransformers en Render,
-    # usamos la matriz de TF-IDF del abstract de la consulta como representación vectorial veloz en producción,
-    # o calculamos la similitud directa contra el mapeo semántico denso precomputado.
     query_clean = limpiar_texto(query)
     q_abs = vectorizador_tf_idf_abs.transform([query_clean])
     
-    # Similitud coseno directa proyectada sobre la geometría de embeddings precalculados
     sim_final = cosine_similarity(q_abs, X_abstracts).flatten()
     indices_top10 = np.argsort(sim_final)[::-1][:10]
     
     resultados = []
     for idx in indices_top10:
         resultados.append({
-            "index": int(idx), "title": str(df.iloc[idx]['Title']), "abstract": str(df.iloc[idx]['Abstracts']),
-            "score": float(sim_final[idx]), "recomendados_top3": obtener_3_recomendados(idx, indices_top10)
+            "index": int(idx), 
+            "id_original": int(df.iloc[idx].get('ID', idx)),
+            "title": str(df.iloc[idx]['Title']), 
+            "keywords": str(df.iloc[idx]['Keywords']),
+            "abstract": str(df.iloc[idx]['Abstracts']),
+            "score": float(sim_final[idx]), 
+            "recomendados_top3": obtener_3_recomendados(idx, indices_top10)
         })
     return resultados
 
